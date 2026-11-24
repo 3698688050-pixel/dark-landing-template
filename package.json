@@ -1,0 +1,15 @@
+{
+  "name": "design-language",
+  "version": "1.0.0",
+  "description": "从 `linear.app` + `spacex.com` 逆向出的设计语言，以及一个按这套语言做的设置流程 demo。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "playwright": "^1.65.1"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+package-lock.json
+*.bak.html
+_tmp_*
+probe.cjs
+shot*.cjs
+fix.cjs
+tips.cjs
+prune.cjs
+verify.mjs
+index.html
+_int.css
+_fonts.cjs
+check-profile.cjs
+*.png
