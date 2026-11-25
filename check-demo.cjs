@@ -6,7 +6,7 @@ const PHI = 1.6180339887;
   const b = await chromium.launch();
   const page = await b.newPage({ viewport: { width: 1440, height: 900 } });
   const errs = []; page.on('pageerror', e => errs.push(String(e))); page.on('console', m => m.type() === 'error' && errs.push(m.text()));
-  await page.goto(pathToFileURL(path.join("D:\\Tools\\design-language", 'design-demo.html')).href);
+  await page.goto(pathToFileURL(path.join(__dirname, 'design-demo.html')).href);
   await page.waitForTimeout(1200);
   await page.evaluate(() => { const r = document.querySelector('.term-sec').getBoundingClientRect(); scrollTo(0, r.top + scrollY + r.height / 2 - innerHeight / 2); });
   await page.waitForTimeout(3200);
@@ -147,6 +147,7 @@ const PHI = 1.6180339887;
   t('墨色深（标题 #2a1d10）', theme.ink === 'rgb(42, 29, 16)', theme.ink);
   t('主按钮：深墨底 + 浅字（明度对比）', theme.btnBg === 'rgb(42, 29, 16)' && theme.btnInk === 'rgb(251, 249, 245)', theme.btnBg + ' / ' + theme.btnInk);
   for (const x of T) console.log((x.ok ? 'PASS' : 'FAIL') + '  ' + x.name + '  — ' + x.info);
+  if (T.some(x => !x.ok)) process.exitCode = 1;
 
   
 
@@ -156,12 +157,12 @@ const PHI = 1.6180339887;
   // Screenshots：等待本区块入场结束，不拍摄过渡中的半透明状态
   const settled = () => [...document.querySelectorAll('.rv')].filter(e => e.classList.contains('on')).every(e => getComputedStyle(e).opacity === '1');
   await page.waitForFunction(settled);
-  await page.screenshot({ path: path.join("D:\\Tools\\design-language", '_dd-1.png') });
+  await page.screenshot({ path: path.join(__dirname, '_dd-1.png') });
   await page.evaluate(() => document.querySelector('#pool').scrollIntoView()); await page.waitForFunction(settled);
-  await page.screenshot({ path: path.join("D:\\Tools\\design-language", '_dd-2.png') });
+  await page.screenshot({ path: path.join(__dirname, '_dd-2.png') });
   await page.evaluate(() => document.querySelector('#gateway').scrollIntoView()); await page.waitForFunction(settled);
-  await page.screenshot({ path: path.join("D:\\Tools\\design-language", '_dd-3.png') });
+  await page.screenshot({ path: path.join(__dirname, '_dd-3.png') });
   await page.evaluate(() => document.querySelector('#start').scrollIntoView()); await page.waitForFunction(settled);
-  await page.screenshot({ path: path.join("D:\\Tools\\design-language", '_dd-4.png') });
+  await page.screenshot({ path: path.join(__dirname, '_dd-4.png') });
   await b.close();
 })();

@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 const path = require('path'); const { pathToFileURL } = require('url');
-const dir = 'D:\\Tools\\design-language';
+const dir = __dirname;
 const VPS = [[1920, 1080, 'fhd'], [1440, 900, 'wide'], [1280, 720, 'hd'], [1024, 800, 'tab'], [390, 844, 'mob']];
 (async () => {
   const browser = await chromium.launch();
@@ -35,4 +35,5 @@ const VPS = [[1920, 1080, 'fhd'], [1440, 900, 'wide'], [1280, 720, 'hd'], [1024,
   }
   for (const o of out) console.log(`${o.tag} ${o.w}x${o.h} overflowX=${o.overflowX} docH=${o.docH} errs=${o.errs} | ` + o.secs.map(s => `${s.s}:${s.h}${s.clipped ? ' CLIP' : ''}`).join(' '));
   await browser.close();
+  if (out.some(o => o.overflowX || o.errs || o.secs.some(s => s.clipped))) process.exitCode = 1;
 })();

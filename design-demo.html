@@ -74,7 +74,7 @@ a{color:inherit;text-decoration:none}
 .hero,.term-sec,.sec,.cta{scroll-margin-top:64px;scroll-snap-align:start;scroll-snap-stop:always}
 /* 翻页时的高斯模糊：只在运动中挂 filter，静止时完全不挂（不干扰文字渲染） */
 .stage{position:relative}
-.stage.is-moving{filter:blur(var(--blur,0px));will-change:filter}
+.stage.is-moving{will-change:filter}
 .hero,.term-sec,.sec,.cta{min-height:calc(100svh - 64px)}
 .hero{display:grid;align-content:center;padding:64px 0}
 .hero .wrap{display:grid;grid-template-columns:var(--col-a) 1fr;align-items:end;column-gap:0}
@@ -514,13 +514,6 @@ const runTerm = () => {
 };
 if (body) { const tio = new IntersectionObserver((es) => { if (es.some(e => e.isIntersecting)) { runTerm(); tio.disconnect(); } }, { threshold: 0.35 }); tio.observe(document.getElementById('mterm')); }
 
-// 平行滚动：背景 glow 以 0.5× 跟随（只做位移，不改 blur——改 filter 每帧会重绘）。
-const glow = document.querySelector('.glow');
-let py = -1, raf = 0, ticking = false;
-const paintGlow = () => { raf = 0; const y = Math.round(window.scrollY * 0.5); if (y !== py) { py = y; glow.style.transform = 'translate3d(0,' + -y + 'px,0)'; } ticking = false; };
-// 滚动事件可能连发，只排一帧；rAF 内再读 scrollY 保证拿到的是最终值
-addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(paintGlow); }, { passive: true });
-
 // 复制按钮状态切换（150ms）。
 const cmd = document.getElementById('cmd');
 const cp = cmd.querySelector('.cp');
@@ -542,28 +535,64 @@ const docTop = el => el.getBoundingClientRect().top + scrollY;
 const topOf = i => docTop(pages[i]) - NAVH;
 const clampIdx = i => Math.max(0, Math.min(pages.length - 1, i));
 
+// 平行滚动：背景 glow 以 0.5× 跟随（只做位移，不改 blur——改 filter 每帧会重绘）。
+const glow = document.querySelector('.glow');
+let glowY = 0;
+
 // 速度→模糊：读真实滚动位移，滚轮/触控板/拖滚动条/键盘都吃到同一套
-let vy = 0, lastY = scrollY, lastT = 0, rafV = 0, bNow = 0, lastWrite = 0;
-const tickBlur = now => {
-  rafV = 0;
-  const dt = Math.max(8, now - lastT), dy = Math.abs(scrollY - lastY);
-  lastY = scrollY; lastT = now;
+let vy = 0, lastY = scrollY, lastT = 0, scrollFrame = 0, bNow = 0, lastWrite = 0;
+// 滚动事件可能连发，视差和模糊共用一帧的 scrollY
+const paintScroll = now => {
+  scrollFrame = 0;
+  const y = scrollY;
+  const parallaxY = Math.round(y * 0.5);
+  if (parallaxY !== glowY) {
+    glowY = parallaxY;
+    glow.style.transform = `translate3d(0,${-glowY}px,0)`;
+  }
+  const dt = Math.max(8, now - lastT), dy = Math.abs(y - lastY);
+  lastY = y; lastT = now;
   if (dy < 3) { vy *= 0.5; } else { vy += (dy / dt - vy) * 0.5; }   // 亚像素级修正不算速度，避免收尾时回闪
   const q = reduce.matches ? 0 : Math.round(Math.min(MAXB, vy * 1.1) * 2) / 2;  // 量化 0.5px
   if (q > 0) {
-    stage.classList.add('is-moving');
-    // 半径变化 = 整层重栅格化，限到 ~20 次/秒；运动中看不出来
-    if (q !== bNow && now - lastWrite >= 45) { bNow = q; lastWrite = now; stage.style.setProperty('--blur', q + 'px'); }
-    rafV = requestAnimationFrame(tickBlur);
-  } else {
-    bNow = 0; stage.style.setProperty('--blur', '0px'); stage.classList.remove('is-moving');
+    // 半径限到 ~20 次/秒；直接写 filter，避免半径变动让整个子树重新计算样式
+    if (q !== bNow && now - lastWrite >= 45) {
+      if (!bNow) stage.classList.add('is-moving');
+      stage.style.filter = `blur(${q}px)`;
+      bNow = q;
+      lastWrite = now;
+    }
+    scrollFrame = requestAnimationFrame(paintScroll);
+  } else if (bNow) {
+    bNow = 0;
+    stage.style.removeProperty('filter');
+    stage.classList.remove('is-moving');
   }
 };
+
+// 拖滚动条/触控滑动后回写当前页；程序翻页已在 jump 中设置 cur
+let syncCurTimer;
+const syncCurrentPage = () => {
+  if (busy) return;
+  let best = 0, nearest = Infinity;
+  pages.forEach((page, i) => {
+    const distance = Math.abs(page.getBoundingClientRect().top - NAVH);
+    if (distance < nearest) { nearest = distance; best = i; }
+  });
+  cur = best;
+};
 addEventListener('scroll', () => {
-  if (!rafV) { lastT = performance.now(); lastY = scrollY; rafV = requestAnimationFrame(tickBlur); }
+  if (!scrollFrame) {
+    lastT = performance.now();
+    lastY = scrollY;
+    scrollFrame = requestAnimationFrame(paintScroll);
+  }
+  if (busy) return;
+  clearTimeout(syncCurTimer);
+  syncCurTimer = setTimeout(syncCurrentPage, 140);
 }, { passive: true });
 
-// 先快后慢：easeOutExpo。翻页期间关掉吸附，避免浏览器中途重新对齐
+// 先快后慢：easeOutQuart。翻页期间关掉吸附，避免浏览器中途重新对齐
 const jump = (i, dur = DUR) => {
   i = clampIdx(i);
   const to = topOf(i), from = scrollY;
@@ -587,14 +616,11 @@ const jump = (i, dur = DUR) => {
 
 // 内部可滚动区域（手机上的命令块）不接管
 const canScrollInner = (el, dy) => {
-  for (let n = el; n && n !== document.body; n = n.parentElement) {
-    const cs = getComputedStyle(n);
-    if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight - n.clientHeight > 2) {
-      const top = n.scrollTop <= 0, bot = n.scrollTop + n.clientHeight >= n.scrollHeight - 1;
-      if (dy > 0 ? !bot : !top) return true;
-    }
-  }
-  return false;
+  const scroller = el.closest?.('.term pre');
+  if (!scroller || getComputedStyle(scroller).overflowY !== 'auto') return false;
+  const { scrollTop, scrollHeight, clientHeight } = scroller;
+  return scrollHeight - clientHeight > 2 &&
+    (dy > 0 ? scrollTop + clientHeight < scrollHeight - 1 : scrollTop > 0);
 };
 
 addEventListener('wheel', e => {
@@ -634,17 +660,6 @@ document.addEventListener('click', e => {
   e.preventDefault();
   jump(i);
 });
-
-// 拖滚动条/触控滑动后回写当前页
-addEventListener('scroll', () => {
-  clearTimeout(window.__syncCur);
-  window.__syncCur = setTimeout(() => {
-    if (busy) return;
-    let best = 0, bd = Infinity;
-    pages.forEach((p, i) => { const d = Math.abs(topOf(i) - scrollY); if (d < bd) { bd = d; best = i; } });
-    cur = best;
-  }, 140);
-}, { passive: true });
 </script>
 </body>
 </html>

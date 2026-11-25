@@ -7,6 +7,7 @@
 - **v1** — 首版：TEMPLATE.md 复刻文档 + 单文件成品 + DOM 验收脚本
 - **v2** — 渲染层优化：打字机、翻页 paint、面板 fit、鼠标视差四处重写，**像素级零差异**（见下文「v2 改了什么」）
 - **v3** — 新增 `design-demo.html`：竖屏满屏翻页的第二套成品。九站实测得到的排版与动效参数 + 滚一下就翻一页（先快后慢 + 速度驱动的髙斯模糊）
+- **v3.5** — 优化竖向翻页的滚动采样和滤镜更新，附上[可复制的 CSS、JS 模块和接线示例](VERTICAL-SCROLL.md)。
 
 ## 两个成品
 
@@ -24,13 +25,16 @@ npm i                      # 只装 playwright，用于验收
 npx playwright install chromium
 ```
 
-双击 `landing.html` 就能看。改完跑一次验收：
+双击 `landing.html` 或 `design-demo.html` 即可预览。从仓库根目录运行相应验收。
 
 ```bash
-node check.cjs
+node check.cjs                 # 横向成品
+node check-demo.cjs            # 竖向成品
+node check-viewports.cjs       # 竖向成品的五档视口
+node check-scroll-modules.cjs  # 从 Markdown 提取并运行复用示例
 ```
 
-全绿（无 AssertionError）才算改对。
+`check-demo.cjs` 的中文字体断言需要系统安装 Noto Sans SC 或微软雅黑。
 
 ## 文件
 
@@ -39,7 +43,9 @@ node check.cjs
 | `TEMPLATE.md` | **主文档**：流程 + token + HTML 骨架 + 10 个 CSS 模块 + 2 个 JS 模块 + 验收脚本 + 踩坑表 |
 | `landing.html` | 成品，单文件（CSS / HTML / JS 全在里面） |
 | `check.cjs` | DOM 断言脚本：页数、每页宽度、溢出、白线、渐变、三个 1.618 比例、JS 报错 |
-| `design-demo.html` | 第二套成品：竖向满屏吸附 + 速度驱动模糊（v3） |
+| `design-demo.html` | 第二套成品：竖向满屏吸附 + 速度驱动模糊（v3.5） |
+| [VERTICAL-SCROLL.md](VERTICAL-SCROLL.md) | 竖向翻页的最小示例、CSS 吸附层和两个可独立接入的 JS 模块 |
+| `check-scroll-modules.cjs` | 从 Markdown 提取代码，检查离线运行和翻页交互 |
 | `check-demo.cjs` | `design-demo.html` 的 49 条断言：字号/字距/黄金比/配色/翻页曲线/模糊衰减 |
 | `check-viewports.cjs` | 五档视口（1920/1440/1280/1024/390）逐屏溢出与裁切检测 |
 | `hero-study.html` | 噪点背景研究稿：`design-demo.html` 底纹与终端窗口的来源 |
@@ -73,6 +79,25 @@ main.deck            ← flex 横排，每屏 flex:0 0 100%，scroll-snap
 - **不要动** `.wrap` 的宽度规则、`--panel-grad`、三个 1.618 的 calc
 
 改完 `node check.cjs`，再 `node mkdoc.cjs` 更新文档。
+
+---
+
+## v3.5 竖向翻页性能优化
+
+- 背景视差和速度模糊共用一个 `requestAnimationFrame`，每帧只采样一次 `scrollY`。
+- 模糊半径变化时直接写 `.stage` 的 `filter`，缩小样式重算范围。两次非零写入至少间隔 45ms，静止时移除 `filter` 和 `will-change`。
+- 程序翻页直接维护当前页。拖滚动条和触控滚动结束后再检查各屏的位置。滚轮和键盘只检查命令块能否内滚，不再逐级读取祖先节点的样式。
+
+在无头 Chromium 的 1440×900 视口中，从首屏跳到账号池，两版各跑三次。下表为每项指标的三次结果中位数。帧间隔仅供参考，不代表真机帧率。
+
+| 指标 | v3 | v3.5 |
+|---|---:|---:|
+| 翻页及收尾期间的样式重算耗时 | 16.0ms | 5.3ms |
+| 720ms 翻页窗口内的平均帧间隔 | 42.3ms | 41.4ms |
+
+桌面 1440×900 和移动端 390×844 各对比五屏。冻结入场和光标动画后，10 组静止截图逐像素一致。另有 49 项行为与版式断言、五档视口检查。
+
+完整接线和四段可直接保存的代码见 [竖向翻页复用指南](VERTICAL-SCROLL.md)。
 
 ---
 
@@ -176,17 +201,19 @@ section{
 ### 3. 髙斯模糊：由速度推导
 
 ```js
-vy += (dy / dt - vy) * 0.5;                              // 平滑后的 px/ms
-stage.style.setProperty('--blur', Math.min(8, vy * 1.1) + 'px');
+vy = dy < 3 ? vy * 0.5 : vy + (dy / dt - vy) * 0.5;
+const radius = Math.round(Math.min(8, vy * 1.1) * 2) / 2;
 ```
+
+v3.5 保留速度映射和量化参数。写入及清理见 [滚动视觉模块](VERTICAL-SCROLL.md#js-滚动视觉)。
 
 实测 `8 → 7.5 → 6 → 4.5 → 3.5 → 2.5 → 1.5 → 1 → 0.5 → 0`。因为读的是真实滚动位移，滚轮、触控板、拖滚动条、键盘、锚点跳转自动获得同一套模糊。
 
 三条硬约束：
 
 - **静止时完全不挂 `filter`**。`blur(0px)` 也会让元素成为滤镜层，改变文字次像素抗锯齿。
-- **半径变化 = 整层重栅格化**。降到 ~20 次/秒（位移仍每帧更新），观感无损。
-- **亚像素位移不计速度**，否则收尾的 1–2px 吸附修正会让画面「已经清晰了又糊一下」。
+- **半径变化限频**。两次非零写入至少间隔 45ms，位移仍随帧更新。
+- **小于 3px 的位移只衰减历史速度**，避免收尾吸附修正让画面「已经清晰了又糊一下」。
 
 ### 4. 三个坑（都表现为「动画最后抖一下」）
 
