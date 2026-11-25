@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WorkBuddy2API — 把 CodeBuddy 账号变成 OpenAI 接口</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   结构学习：autoclaw.zhipuai.cn/home/hero-2760.avif
+   三层叠放：纹理底 → macOS 窗口（浅色、净）→ 内容
+   对比来自「脏 / 净」+「暖 / 冷」，不来自明暗
+   ───────────────────────────────────────────────────────────── */
+@font-face{font-family:"ITight";src:url("vendor/fonts/intertight-var.woff2") format("woff2");font-weight:300 700;font-display:swap;unicode-range:U+0000-00FF,U+2000-206F,U+2100-214F,U+2190-21FF,U+2200-22FF}
+@font-face{font-family:"JBM";src:url("vendor/fonts/jbmono-400.woff2") format("woff2");font-weight:400;font-display:swap}
+
+:root{
+  --sans:"ITight",-apple-system,"PingFang SC","Noto Sans SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"JBM",ui-monospace,"Cascadia Mono",Consolas,monospace;
+
+  /* 底层：暖色纹理。四个色块用 SVG feTurbulence 揉开，这里只放兜底色 */
+  --wash-1:#c9a97e; --wash-2:#efe6d6; --wash-3:#b67a4a; --wash-4:#8c6a4a;
+
+  /* 窗口：净。不是纯白，是带一点暖的白 */
+  --win:#fbfaf8; --win-side:#f3f0eb; --win-line:rgba(40,30,20,.08);
+  --ink:#1d1b18; --ink-2:#6b655c; --ink-3:#a39c90;
+  --accent:#e8743a;           /* 用户气泡的橙 */
+  --accent-soft:#fbe3d6;
+  --ok:#3f9b63; --warn:#d9902f; --err:#d64f3f;
+  --send:#2a2724;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  font:400 15px/26px var(--sans);color:var(--ink);
+  -webkit-font-smoothing:antialiased;font-synthesis:none;
+  background:#c9a97e;overflow-x:hidden;
+}
+
+/* ── 底层：程序化纹理 ───────────────────────────────────────────
+   一张 SVG 当背景：两层分形噪声分别做「大面积色块」和「细颗粒」，
+   再叠一层斜向笔触。不依赖外部图片。 */
+.wash{
+  position:fixed;inset:0;z-index:-1;overflow:hidden;
+  background:var(--wash-2);
+}
+.wash svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+.wash::after{ /* 四角压暗一点，窗口才"浮" */
+  content:"";position:absolute;inset:0;
+  background:
+    radial-gradient(120% 90% at 50% 40%,transparent 60%,rgba(90,60,30,.14) 100%),
+    linear-gradient(180deg,rgba(255,255,255,.12),transparent 25%);
+}
+
+/* ── 页面骨架 ───────────────────────────────────────────────── */
+.wrap{width:100%;max-width:1532px;margin:0 auto;padding:0 48px}
+.hero{min-height:100vh;display:flex;flex-direction:column;justify-content:safe center;padding:72px 0 56px}
+.hero-copy{ text-align:center;margin-bottom:48px}
+.hero-copy h1{
+  margin:0 auto;font-size:clamp(40px,4.6vw,64px);line-height:1.12;font-weight:600;
+  letter-spacing:0;max-width:20em;color:#2a2118;
+}
+.hero-copy h1 em{font-style:normal;color:#2a2118;position:relative;z-index:0;white-space:nowrap}
+.hero-copy h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;bottom:.03em;height:.09em;background:var(--accent);opacity:.75}
+.hero-copy p{margin:26px auto 0;max-width:36em;font-size:19px;line-height:32px;color:#4a3f33}
+
+/* ── 窗口：macOS 外壳 ───────────────────────────────────────── */
+.win{
+  position:relative;
+  width:min(1180px,100%);margin:0 auto;
+  background:var(--win);
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.6);
+  box-shadow:
+    0 1px 2px rgba(40,25,10,.06),
+    0 12px 40px -12px rgba(40,25,10,.28),
+    0 40px 120px -40px rgba(40,25,10,.35);
+  overflow:hidden;
+  display:grid;grid-template-columns:340px minmax(0,1fr);grid-template-rows:52px minmax(0,1fr);
+  grid-template-areas:"hd hd" "side main";
+  height:clamp(540px,calc(100vh - 390px),760px);
+}
+.win-hd{
+  grid-area:hd;display:flex;align-items:center;gap:12px;padding:0 18px;
+  border-bottom:1px solid var(--win-line);
+  background:linear-gradient(180deg,#fff, #f8f6f2);
+  -webkit-app-region:drag;
+}
+.lights{display:flex;gap:8px}
+.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.lights i:nth-child(1){background:#ff5f57}
+.lights i:nth-child(2){background:#febc2e}
+.lights i:nth-child(3){background:#28c840}
+.win-hd .side-btn{width:28px;height:22px;border-radius:5px;border:1px solid rgba(40,30,20,.18);display:grid;place-items:center;color:var(--ink-2)}
+.win-hd .side-btn svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.5}
+.win-hd .title{font-size:14px;font-weight:500;color:var(--ink)}
+.win-hd .right{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--ink-2)}
+.win-hd .right .ic{width:30px;height:30px;border-radius:6px;display:grid;place-items:center}
+.win-hd .right .ic:hover{background:rgba(40,30,20,.06)}
+.win-hd .right svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── 左栏：聊天 ─────────────────────────────────────────────── */
+.side{
+  grid-area:side;background:var(--win-side);border-right:1px solid var(--win-line);
+  display:flex;flex-direction:column;min-height:0;
+}
+.side-scroll{flex:1;min-height:0;overflow:auto;padding:22px 18px;display:flex;flex-direction:column;gap:18px}
+.side-scroll::-webkit-scrollbar{width:0}
+.bubble{
+  align-self:flex-start;max-width:92%;
+  background:var(--accent-soft);color:#2a2118;
+  padding:11px 14px;border-radius:12px;font-size:14px;line-height:22px;
+}
+.msg{font-size:14px;line-height:22px;color:var(--ink);display:flex;flex-direction:column;gap:10px}
+.msg .who{font-size:12.5px;color:var(--ink-3);margin-bottom:-2px}
+.msg p{margin:0}
+.msg ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.msg li{position:relative;padding-left:14px}
+.msg li::before{content:"";position:absolute;left:0;top:10px;width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.file{
+  display:flex;align-items:center;gap:12px;padding:12px 14px;
+  background:#fff;border:1px solid var(--win-line);border-radius:10px;
+  box-shadow:0 1px 2px rgba(40,25,10,.04);
+}
+.file .ico{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#ffb27a,#e8743a);display:grid;place-items:center;color:#fff;flex:none}
+.file .ico svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.file .meta{min-width:0;flex:1}
+.file .nm{font-size:14px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file .sz{font:400 11.5px/16px var(--mono);color:var(--ink-3)}
+.file .open{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--win-line);background:#fff;font-size:12.5px;color:var(--ink);white-space:nowrap}
+.file .open svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+.side-foot{padding:12px 14px 10px;border-top:1px solid var(--win-line)}
+.composer{
+  background:#fff;border:1px solid var(--win-line);border-radius:12px;padding:10px 10px 8px;
+  box-shadow:0 1px 2px rgba(40,25,10,.04);
+  display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;
+}
+.composer .ph{font-size:14px;line-height:22px;color:var(--ink-3);padding:2px 4px 8px}
+.composer .row{grid-column:1/-1;display:flex;align-items:center;gap:8px}
+.composer .tool,.composer .model{height:26px;padding:0 8px;border-radius:6px;display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--ink-2)}
+.composer .tool:hover,.composer .model:hover{background:rgba(40,30,20,.05)}
+.composer svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.composer .model b{font-weight:500;color:var(--ink)}
+.composer .model svg{width:10px;height:10px;stroke-width:2}
+.composer .send{margin-left:auto;width:30px;height:30px;border-radius:50%;background:var(--send);color:#fff;display:grid;place-items:center}
+.composer .send svg{width:14px;height:14px;stroke-width:2.2}
+.side-foot .hint{text-align:center;font:400 11px/16px var(--mono);color:var(--ink-3);margin-top:8px}
+
+/* ── 右栏：预览 ─────────────────────────────────────────────── */
+.main{grid-area:main;display:flex;flex-direction:column;min-height:0;background:var(--win)}
+.tabs{display:flex;align-items:center;height:44px;padding:0 8px;border-bottom:1px solid var(--win-line);gap:2px}
+.tab{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:7px;font-size:13px;color:var(--ink-2)}
+.tab.on{background:rgba(40,30,20,.06);color:var(--ink)}
+.tab svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tab .x{width:14px;height:14px;display:grid;place-items:center;margin-left:2px;color:var(--ink-3)}
+.tab .x svg{width:10px;height:10px}
+.tabs .plus{width:28px;height:28px;display:grid;place-items:center;color:var(--ink-2);border-radius:6px}
+.tabs .plus:hover{background:rgba(40,30,20,.06)}
+.tabs .plus svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
+.tabs .end{margin-left:auto;display:flex;align-items:center;gap:4px;color:var(--ink-2)}
+.tabs .end .ic{width:28px;height:28px;display:grid;place-items:center;border-radius:6px}
+.tabs .end .ic:hover{background:rgba(40,30,20,.06)}
+.tabs .end svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+.toolbar{display:flex;align-items:center;gap:2px;height:40px;padding:0 14px;border-bottom:1px solid var(--win-line);font-size:12.5px;color:var(--ink-2)}
+.toolbar .grp{display:flex;align-items:center;gap:2px;padding:0 6px;height:28px;border-radius:6px}
+.toolbar .grp:hover{background:rgba(40,30,20,.05)}
+.toolbar .sep{width:1px;height:16px;background:var(--win-line);margin:0 8px}
+.toolbar svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.toolbar .zoom{display:flex;align-items:center;gap:10px;margin-left:auto}
+.toolbar .zoom .ic{width:22px;height:22px;display:grid;place-items:center;border-radius:5px}
+.toolbar .zoom .ic:hover{background:rgba(40,30,20,.05)}
+
+/* 画布：浅冷灰，让手机浮起来 */
+.canvas{flex:1;min-height:0;position:relative;overflow:hidden;background:#f1efeb}
+.canvas::before{
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(60% 70% at 50% 45%,rgba(255,255,255,.9),transparent 70%);
+}
+.phone{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:340px;height:calc(100% - 56px);max-height:680px;min-height:420px;
+  background:#fff;border-radius:38px;
+  box-shadow:0 0 0 10px #1c1a18,0 0 0 11px #3a3632,0 30px 60px -20px rgba(40,25,10,.35),0 2px 6px rgba(40,25,10,.15);
+  overflow:hidden;display:flex;flex-direction:column;
+}
+.phone .notch{position:absolute;left:50%;top:10px;transform:translateX(-50%);width:96px;height:26px;border-radius:14px;background:#1c1a18;z-index:2}
+.phone .status{display:flex;justify-content:space-between;align-items:center;padding:14px 26px 6px;font:500 13px/18px var(--sans);color:var(--ink)}
+.phone .status svg{width:58px;height:12px;display:block}
+.phone .screen{flex:1;min-height:0;overflow:hidden;padding:6px 18px 0;display:flex;flex-direction:column}
+.phone .app-hd{display:flex;align-items:center;justify-content:space-between;padding:6px 0 10px}
+.phone .app-hd .nm{font-size:21px;font-weight:600;letter-spacing:-.01em}
+.phone .app-hd .ics{display:flex;gap:8px}
+.phone .app-hd .ic{width:30px;height:30px;border-radius:50%;background:#f3f0eb;display:grid;place-items:center;color:var(--ink)}
+.phone .app-hd svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.stories{display:flex;gap:12px;padding:2px 0 12px}
+.st{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10.5px;color:var(--ink-2);width:52px}
+.st .av{width:48px;height:48px;border-radius:50%;padding:2px;background:conic-gradient(from 210deg,#e8743a,#d64f3f,#d9902f,#e8743a)}
+.st .av i{display:block;width:100%;height:100%;border-radius:50%;border:2px solid #fff;background:linear-gradient(135deg,#c9a97e,#8c6a4a)}
+.st.me .av{background:#e9e5df;padding:0;position:relative}
+.st.me .av i{background:#f3f0eb;border:0}
+.st.me .av b{position:absolute;right:-2px;bottom:-2px;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;font:600 12px/18px var(--sans);text-align:center;border:2px solid #fff}
+.post{background:#fff;border:1px solid rgba(40,30,20,.07);border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(40,25,10,.05)}
+.post .ph-hd{display:flex;align-items:center;gap:10px;padding:10px 12px}
+.post .ph-hd .av{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#3a3632,#1c1a18)}
+.post .ph-hd .who b{display:block;font-size:13px;font-weight:500;color:var(--ink);line-height:16px}
+.post .ph-hd .who span{font-size:11px;color:var(--ink-3)}
+.post .ph-hd .dots{margin-left:auto;color:var(--ink-3)}
+.post .img{aspect-ratio:1/.82;background:
+  linear-gradient(180deg,rgba(20,30,50,.0) 35%,rgba(20,30,50,.55) 100%),
+  radial-gradient(70% 60% at 50% 60%,#e0a05a 0%,#a0583a 45%,#3a2c3a 100%)}
+.post .body{padding:12px 14px 14px}
+.post .tag{font:500 10px/14px var(--mono);letter-spacing:.08em;color:var(--accent);text-transform:uppercase}
+.post h4{margin:4px 0 6px;font:600 18px/22px Georgia,"Songti SC","Noto Serif SC",serif;color:var(--ink);letter-spacing:-.005em}
+.post p{margin:0;font-size:12.5px;line-height:18px;color:var(--ink-2)}
+.post .read{display:flex;align-items:center;gap:5px;margin-top:8px;font-size:11px;color:var(--ink-3)}
+.post .read svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6}
+.post .acts{display:flex;align-items:center;gap:18px;margin-top:12px;padding-top:10px;border-top:1px solid rgba(40,30,20,.07);color:var(--ink-2);font-size:12px}
+.post .acts span{display:inline-flex;align-items:center;gap:5px}
+.post .acts svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.post .acts .end{margin-left:auto}
+
+@media (max-width:1180px){
+  .win{grid-template-columns:300px minmax(0,1fr)}
+  .phone{width:300px}
+}
+@media (max-width:860px){
+  :root{--gut:20px}
+  .wrap{padding:0 var(--gut)}
+  .win{grid-template-columns:1fr;grid-template-areas:"hd" "main" "side";height:auto;min-height:0}
+  .side{order:2;border-right:0;border-top:1px solid var(--win-line);max-height:420px}
+  .main{order:1;height:620px}
+  .phone{width:280px}
+  .hero{padding:64px 0 48px}
+  .hero-copy h1{font-size:clamp(34px,9vw,44px)}
+  .hero-copy p{font-size:16px;line-height:26px;padding:0 8px}
+  .tabs .tab:nth-child(3),.tabs .tab .x{display:none}
+  .toolbar .grp:nth-child(n+4),.toolbar .sep{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="wash" aria-hidden="true">
+  <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+    <defs>
+      <!-- 大面积色块：低频分形噪声 → 阈值化 → 模糊，形成「水彩晕开」的边。只在局部出现赭石 -->
+      <!-- 大面积色块：低频分形噪声 → 阈值化 → 作为蒙版挖空 rect 的 fill 色 → 模糊。色块边缘是「水彩晕开」 -->
+      <filter id="blobs" x="-10%" y="-10%" width="120%" height="120%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.0032 0.004" numOctaves="3" seed="7" result="n"/>
+        <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  2.4 1.8 0 0 -1.05" result="m"/>
+        <feComposite in="SourceGraphic" in2="m" operator="in"/>
+        <feGaussianBlur stdDeviation="26"/>
+      </filter>
+      <!-- 斜向晕染：低频噪声形成不规则块，同样用 SourceGraphic 取色 -->
+      <filter id="strokes" x="-20%" y="-20%" width="140%" height="140%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.007 0.013" numOctaves="4" seed="11" result="n"/>
+        <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1.8 1.2 0 0 -0.8" result="m"/>
+        <feComposite in="SourceGraphic" in2="m" operator="in"/>
+        <feGaussianBlur stdDeviation="9"/>
+      </filter>
+      <!-- 细颗粒：高频噪声，极淡，做「纸面」质感 -->
+      <filter id="grain">
+        <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" seed="3"/>
+        <feColorMatrix type="saturate" values="0"/>
+        <feComponentTransfer><feFuncA type="linear" slope=".16"/></feComponentTransfer>
+      </filter>
+      <linearGradient id="base" x1="0.1" y1="0" x2="0.9" y2="1">
+        <stop offset="0" stop-color="#e9dcc6"/>
+        <stop offset=".35" stop-color="#f2ebe0"/>
+        <stop offset=".6" stop-color="#e6d3b8"/>
+        <stop offset="1" stop-color="#dcc4a2"/>
+      </linearGradient>
+      <radialGradient id="light" cx="50%" cy="42%" r="70%">
+        <stop offset="0" stop-color="#fff" stop-opacity=".55"/>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <!-- 底：米白 / 浅沙 -->
+    <rect width="1600" height="1000" fill="url(#base)"/>
+    <!-- 赭石色块，只在左上和右下各出现一块 -->
+    <g transform="rotate(-28 800 500)">
+      <rect x="-500" y="-400" width="1300" height="800" fill="#b06e3a" filter="url(#blobs)" opacity=".9"/>
+      <rect x="900" y="650" width="1400" height="900" fill="#c08248" filter="url(#blobs)" opacity=".85"/>
+      <!-- 青灰一块，让暖色不闷 -->
+      <rect x="800" y="-350" width="1000" height="650" fill="#7f948e" filter="url(#blobs)" opacity=".5"/>
+    </g>
+    <!-- 斜向晕染：用褐色而不是黑色去乘，压出来是暖的不是灰的 -->
+    <g transform="rotate(-28 800 500)">
+      <rect x="-500" y="-500" width="2600" height="2000" fill="#9a6a44" filter="url(#strokes)" opacity=".62" style="mix-blend-mode:multiply"/>
+    </g>
+    <!-- 中心提亮，窗口下方那块最亮 -->
+    <rect width="1600" height="1000" fill="url(#light)"/>
+    <!-- 颗粒 -->
+    <rect width="1600" height="1000" filter="url(#grain)" opacity=".5" style="mix-blend-mode:multiply"/>
+  </svg>
+</div>
+
+<main class="hero">
+  <div class="wrap">
+    <div class="hero-copy">
+      <h1>把 CodeBuddy 账号<br>变成 <em>OpenAI</em> 接口</h1>
+      <p>多账号池、熔断冷却、会话粘性都由网关处理。对客户端只暴露一个接口，现有 SDK 零改造接入。</p>
+    </div>
+
+    <section class="win" aria-label="产品演示">
+      <header class="win-hd">
+        <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="side-btn" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></span>
+        <span class="title">WorkBuddy2API</span>
+        <span class="right">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4v12"/><path d="M8 10l4 4 4-4"/><path d="M4 20h16"/></svg></span>
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9v11h11"/><path d="M20 4v11h-5"/><path d="M4 20L20 4"/></svg></span>
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></span>
+        </span>
+      </header>
+
+      <aside class="side">
+        <div class="side-scroll">
+          <div class="bubble">帮我把账号池的健康状态发我，按网关的接口格式整理成一屏面板</div>
+          <div class="msg">
+            <span class="who">WorkBuddy2API</span>
+            <p>好，已读取 <code>/v1/pool</code> 的实时数据。按「账号 → 积分 → 状态」三层整理：</p>
+            <ul>
+              <li>9 个账号：6 可用、2 限流、1 封禁</li>
+              <li>最长冷却 412s，到点自动回池</li>
+              <li>签到回血 02:41 后执行</li>
+            </ul>
+          </div>
+          <div class="file">
+            <span class="ico"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span>
+            <span class="meta">
+              <span class="nm">pool-dashboard.html</span>
+              <span class="sz">html · 7.9KB</span>
+            </span>
+            <span class="open">打开 <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+          </div>
+        </div>
+        <div class="side-foot">
+          <div class="composer">
+            <div class="ph">发送给 WorkBuddy2API</div>
+            <div class="row">
+              <span class="tool" aria-label="附件"><svg viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19"/></svg></span>
+              <span class="model"><b>GLM-5</b> <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+              <span class="model">Hermes 进化 <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+              <span class="send" aria-label="发送"><svg viewBox="0 0 24 24"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></span>
+            </div>
+          </div>
+          <div class="hint">agent 在本地运行，内容由 AI 生成</div>
+        </div>
+      </aside>
+
+      <section class="main">
+        <nav class="tabs">
+          <span class="tab on"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>文件 <span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></span></span>
+          <span class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>pool-dashboard.html <span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></span></span>
+          <span class="tab"><svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>Pool PRD <span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></span></span>
+          <span class="plus" aria-label="新建标签"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>
+          <span class="end">
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M16 20h3a1 1 0 0 0 1-1v-3"/></svg></span>
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></span>
+          </span>
+        </nav>
+        <div class="toolbar">
+          <span class="grp"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7s10 7 10 7s-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>预览</span>
+          <span class="grp"><svg viewBox="0 0 24 24"><path d="M16 18l6-6l-6-6"/><path d="M8 6l-6 6l6 6"/></svg>code</span>
+          <span class="sep"></span>
+          <span class="grp"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1l1-4z"/></svg>编辑元素</span>
+          <span class="grp"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3a1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>全局微调</span>
+          <span class="sep"></span>
+          <span class="grp"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>评论修改</span>
+          <span class="zoom">
+            <span>桌面端</span>
+            <svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg>
+            <span class="ic"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></span>
+            <span>100%</span>
+            <span class="ic"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>
+          </span>
+        </div>
+        <div class="canvas">
+          <div class="phone" aria-label="手机预览">
+            <span class="notch" aria-hidden="true"></span>
+            <div class="status">
+              <span>9:41</span>
+              <svg viewBox="0 0 58 12" aria-hidden="true"><rect x="0" y="4" width="3" height="8" rx="1" fill="#1d1b18"/><rect x="5" y="2.5" width="3" height="9.5" rx="1" fill="#1d1b18"/><rect x="10" y="1" width="3" height="11" rx="1" fill="#1d1b18"/><rect x="15" y="0" width="3" height="12" rx="1" fill="#1d1b18" opacity=".35"/><path d="M23 5.5a8 8 0 0 1 11 0M25.5 8a4.5 4.5 0 0 1 6 0M28 10.5l.5.5l.5-.5" fill="none" stroke="#1d1b18" stroke-width="1.6" stroke-linecap="round"/><rect x="38" y="1.5" width="17" height="9" rx="2.5" fill="none" stroke="#1d1b18" stroke-width="1"/><rect x="40" y="3.5" width="11" height="5" rx="1" fill="#1d1b18"/><rect x="56" y="4" width="2" height="4" rx="1" fill="#1d1b18"/></svg>
+            </div>
+            <div class="screen">
+              <div class="app-hd">
+                <span class="nm">Pool</span>
+                <span class="ics">
+                  <span class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>
+                  <span class="ic"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0v5l2 3H4l2-3z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg></span>
+                </span>
+              </div>
+              <div class="stories">
+                <span class="st me"><span class="av"><i></i><b>+</b></span>Your story</span>
+                <span class="st"><span class="av"><i></i></span>a1</span>
+                <span class="st"><span class="av"><i></i></span>a3</span>
+                <span class="st"><span class="av"><i></i></span>b1</span>
+                <span class="st"><span class="av"><i></i></span>c2</span>
+              </div>
+              <article class="post">
+                <div class="ph-hd">
+                  <span class="av"></span>
+                  <span class="who"><b>Account 03</b><span>限流 · 2 分钟前</span></span>
+                  <span class="dots"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span>
+                </div>
+                <div class="img"></div>
+                <div class="body">
+                  <div class="tag">Cooldown</div>
+                  <h4>412s 后自动回池</h4>
+                  <p>积分 870 · 最近一次 429 来自 deepseek-v4-flash，网关已切到下一账号，客户端无感。</p>
+                  <div class="read"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>剩余 6 分 52 秒</div>
+                  <div class="acts">
+                    <span><svg viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6l1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>6</span>
+                    <span><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>2</span>
+                    <span class="end"><svg viewBox="0 0 24 24"><path d="M4 12v8h16v-8"/><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/></svg></span>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+  </div>
+</main>
+
+</body>
+</html>

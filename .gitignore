@@ -14,3 +14,8 @@ _fonts.cjs
 check-profile.cjs
 *.png
 *.pre-opt.html
+*.webm
+*.log
+_vid/
+_shots/
+_*.cjs

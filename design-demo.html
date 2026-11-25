@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WorkBuddy2API — 设计语言学习 demo</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   字体：Inter Tight 可变字重 300–700（Linear 同源），中文显式列出 Noto Sans SC 再排雅黑
+   ───────────────────────────────────────────────────────────── */
+@font-face{font-family:"ITight";src:url("vendor/fonts/intertight-var.woff2") format("woff2");font-weight:300 700;font-display:swap;unicode-range:U+0000-00FF,U+2000-206F,U+2100-214F,U+2190-21FF,U+2200-22FF}
+@font-face{font-family:"JBM";src:url("vendor/fonts/jbmono-400.woff2") format("woff2");font-weight:400;font-display:swap}
+
+:root{
+  --phi:1.6180339887;
+  /* 版心：1436 = Linear 实测；内容宽 1333 */
+  --vw:1436px; --pad:51px; --cw:1334px;
+  /* 黄金分割栏位 */
+  --col-a:826px;   /* 1334 / 1.618 */
+  --col-b:508px;   /* 1334 − 826 */
+  /* 字号阶梯：以 φ 为底，从 16 起 */
+  --fs--1:12px; --fs-0:16px; --fs-1:26px; --fs-2:42px; --fs-3:68px;
+  /* 节奏：两档，成 2 倍（SpaceX 15/30 的同构） */
+  --s1:16px; --s2:32px; --sec:128px; --sec-half:79px;
+  /* 表面：浅暖灰阶（AutoClaw 原图：米白底 + 暖赭色块） */
+  --bg:#f4efe6; --surface:#fbf9f5; --surface-2:#efe9de;
+  --line:rgba(60,40,20,.10); --line-2:rgba(60,40,20,.16); --line-3:rgba(60,40,20,.06);
+  --ink:#2a1d10; --ink-2:#6a5a48; --ink-3:#9a8a78;
+  --accent:#b8642a; --ok:#1f7a3a; --warn:#b8791a; --err:#c04a3a;
+  --btn:#2a1d10; --btn-ink:#fbf9f5;
+  --r-sm:6px; --r-md:8px; --r-lg:11px; --r-pill:9999px;
+  --sans:"ITight","Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"JBM","SFMono-Regular",Consolas,monospace;
+  /* 动效：Linear 实测 150–200ms + cubic-bezier(.25,.1,.25,1)；入场 600ms 只一次 */
+  --t-fast:150ms; --t:200ms; --t-in:600ms;
+  --ease:cubic-bezier(.25,.1,.25,1); --ease-out:cubic-bezier(.16,1,.3,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--bg);scroll-snap-type:y mandatory}
+/* body 透明，让 z-index:-1 的 glow 透出来 */
+.glow{position:fixed;inset:-30%;z-index:-1;pointer-events:none;filter:blur(70px) saturate(1.2);will-change:transform;transform:translate3d(0,0,0)}
+.glow i{position:absolute;display:block;border-radius:50%;mix-blend-mode:multiply}
+.glow i:nth-child(1){width:42vw;height:42vw;left:-4vw;top:-6vh;background:radial-gradient(circle at 50% 50%,#d9a56a 0%,#c98a4a 40%,transparent 72%);opacity:.7}
+.glow i:nth-child(2){width:36vw;height:36vw;right:-6vw;top:-4vh;background:radial-gradient(circle at 50% 50%,#b8642a 0%,#a0522a 40%,transparent 72%);opacity:.55}
+.glow i:nth-child(3){width:30vw;height:30vw;left:28vw;top:52vh;background:radial-gradient(circle at 50% 50%,#6a8a8a 0%,#4a6a6a 42%,transparent 72%);opacity:.35}
+.glow i:nth-child(4){width:28vw;height:28vw;right:14vw;top:66vh;background:radial-gradient(circle at 50% 50%,#c9905a 0%,#b0703a 40%,transparent 72%);opacity:.45}
+/* 中心辉光：极淡、极大，让标题周围不是死黑 */
+.glow::after{content:"";position:absolute;left:20vw;top:10vh;width:60vw;height:60vh;border-radius:50%;background:radial-gradient(ellipse at center,rgba(200,150,90,.18),transparent 65%)}
+body{background:transparent;color:var(--ink-2);font:400 var(--fs-0)/1.6 var(--sans);letter-spacing:0;font-synthesis:none;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:rgba(184,100,42,.25)}
+h1,h2,h3{color:var(--ink);font-weight:500;letter-spacing:0;line-height:1.15}
+.en{font-family:"ITight",var(--sans);letter-spacing:-.022em;font-weight:510}
+a{color:inherit;text-decoration:none}
+.wrap{width:100%;max-width:var(--vw);margin:0 auto;padding:0 var(--pad)}
+
+/* ───────── 顶部：Linear 64 高 + blur(20px) ───────── */
+.nav{position:sticky;top:0;z-index:10;height:64px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);background:rgba(244,239,230,.72);border-bottom:1px solid var(--line)}
+.nav .wrap{height:100%;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:13px;font-weight:510;letter-spacing:-.01em}
+.brand svg{display:block}
+.nav-links{display:flex;gap:4px}
+.nav-links a{font-size:13px;color:var(--ink-2);height:32px;display:inline-flex;align-items:center;padding:0 12px;border-radius:var(--r-pill);transition:color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
+.nav-links a:hover{color:var(--ink);background:rgba(60,40,20,.06)}
+.nav-cta{display:flex;align-items:center;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--r-pill);font:500 13px/1 var(--sans);cursor:pointer;transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease)}
+.btn:active{transform:scale(.98)}
+.btn-primary{background:var(--btn);color:var(--btn-ink)}
+.btn-primary:hover{background:#3a2a1a}
+.btn-ghost{color:var(--ink);border:1px solid var(--line-2)}
+.btn-ghost:hover{border-color:rgba(60,40,20,.3);background:rgba(60,40,20,.05)}
+
+/* ───────── 每部分独占一屏；导航之外的完整视口 ───────── */
+/* 每屏顶部让出导航，锚点落点在导航下沿 */
+.hero,.term-sec,.sec,.cta{scroll-margin-top:64px;scroll-snap-align:start;scroll-snap-stop:always}
+/* 翻页时的高斯模糊：只在运动中挂 filter，静止时完全不挂（不干扰文字渲染） */
+.stage{position:relative}
+.stage.is-moving{filter:blur(var(--blur,0px));will-change:filter}
+.hero,.term-sec,.sec,.cta{min-height:calc(100svh - 64px)}
+.hero{display:grid;align-content:center;padding:64px 0}
+.hero .wrap{display:grid;grid-template-columns:var(--col-a) 1fr;align-items:end;column-gap:0}
+.hero h1{font-size:var(--fs-3);line-height:1.0;letter-spacing:0}
+.hero h1 .zh{line-height:1.12}
+.hero h1 .en{display:block}
+.hero h1 .zh{display:block}
+.hero .lead{grid-column:2;align-self:end;padding-bottom:6px}
+.hero .lead p{font-size:var(--fs-1);line-height:1.38;color:var(--ink-2);max-width:430px}
+.hero .lead .btns{margin-top:var(--s2);display:flex;gap:8px;flex-wrap:wrap}
+.label{font:500 11px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);display:inline-flex;align-items:center;gap:8px;margin-bottom:var(--s2)}
+/* 唯一的入场动效：Apple 式一次性淡入 */
+.in{opacity:0;transform:translateY(24px);animation:in 600ms cubic-bezier(.16,1,.3,1) forwards;animation-delay:calc(var(--i,0) * 60ms + 80ms)}
+@keyframes in{to{opacity:1;transform:none}}
+/* 滚动入场：IntersectionObserver 触发，stagger 60ms（DJI 实测 100，Samsung/Linear 的 9–16ms 是帧间隔不算） */
+.rv{opacity:0;transform:translateY(24px);transition:opacity 600ms cubic-bezier(.16,1,.3,1),transform 600ms cubic-bezier(.16,1,.3,1);transition-delay:calc(var(--i,0) * 60ms)}
+.rv.on{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.in{animation:none;opacity:1;transform:none}.rv{transition:none;opacity:1;transform:none}.glow{display:none}}
+
+/* ───────── 终端区：暖色杂色底 + 浅色 Mac 终端（AutoClaw hero 的脏/净对比） ───────── */
+.term-sec{position:relative;isolation:isolate;overflow:hidden;padding:64px 0;display:flex;align-items:center}
+.term-sec .bg{position:absolute;inset:0;z-index:-1;background:transparent;-webkit-mask-image:linear-gradient(180deg,transparent,#000 160px,#000 calc(100% - 160px),transparent);mask-image:linear-gradient(180deg,transparent,#000 160px,#000 calc(100% - 160px),transparent)}
+.term-sec .bg svg{display:block;width:100%;height:100%}
+/* 杂色底上的字用深墨 */
+.term-sec h2{font-size:32px;line-height:1.15;color:#2a1d10;max-width:560px;letter-spacing:0}
+.term-sec h2 .en{color:#2a1d10}
+.term-sec .lead{font-size:16px;line-height:1.6;color:#5a4632;max-width:480px;margin-top:16px}
+.mterm{
+  --win:#fdfcfa;--win-line:rgba(40,25,10,.10);--win-ink:#2a1d10;--win-ink-2:#7a6a58;
+  position:relative;margin-top:48px;width:min(980px,100%);
+  background:var(--win);border-radius:12px;border:1px solid rgba(255,255,255,.6);
+  box-shadow:0 1px 2px rgba(40,25,10,.06),0 12px 40px -12px rgba(40,25,10,.28),0 40px 120px -40px rgba(40,25,10,.35);
+  overflow:hidden}
+.mterm-hd{height:44px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--win-line);background:linear-gradient(180deg,#fff,#f8f6f2);user-select:none}
+.mterm-hd .lights{display:flex;gap:8px}
+.mterm-hd .lights i{width:12px;height:12px;border-radius:50%;display:block}
+.mterm-hd .lights i:nth-child(1){background:#ff5f57}.mterm-hd .lights i:nth-child(2){background:#febc2e}.mterm-hd .lights i:nth-child(3){background:#28c840}
+.mterm-hd .tab{margin-left:12px;display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;border-radius:6px;background:var(--win);border:1px solid var(--win-line);font:400 12px/1 var(--mono);color:var(--win-ink);box-shadow:0 1px 1px rgba(40,25,10,.04)}
+.mterm-hd .tab b{font-weight:500}
+.mterm-hd .tab i{width:7px;height:7px;border-radius:50%;background:#28c840;display:block}
+.mterm-hd .dim{margin-left:auto;font:400 11px/1 var(--mono);color:var(--win-ink-2);letter-spacing:.02em}
+.mterm-body{padding:22px 24px 26px;font:400 13px/1.8 var(--mono);color:var(--win-ink);white-space:pre-wrap;word-break:break-all}
+.mterm-body .ln{display:block;opacity:0;transform:translateY(4px)}
+.mterm-body .ln.on{opacity:1;transform:none;transition:opacity 400ms cubic-bezier(.16,1,.3,1),transform 400ms cubic-bezier(.16,1,.3,1)}
+.mterm-body .p{color:#8a5a2a}
+.mterm-body .k{color:#2a4db8}
+.mterm-body .g{color:#1f7a3a}
+.mterm-body .y{color:#b8642a}
+.mterm-body .d{color:var(--win-ink-2)}
+.mterm-body .b{background:#f1ebe2;border-radius:4px;padding:1px 6px;color:var(--win-ink)}
+.mterm-body .caret{background:#2a1d10;height:14px;vertical-align:-2px}
+.mterm-body .bar{display:inline-block;width:200px;height:6px;background:#ece4d6;border-radius:3px;vertical-align:middle;overflow:hidden}
+.mterm-body .bar i{display:block;height:100%;width:0;background:#1f7a3a;border-radius:3px;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
+.mterm-body .bar.on i{width:100%}
+
+/* ───────── 章节：Linear 两栏标题头，左 h2 右副文 ───────── */
+.sec{padding:64px 0;display:flex;align-items:center}
+.sec > .wrap,.term-sec > .wrap{width:100%}
+.sec-head{display:grid;grid-template-columns:var(--col-a) 1fr;align-items:start;padding-bottom:79px}
+.sec-head h2{font-size:48px;line-height:1.1;max-width:826px}
+.sec-head p{font-size:17px;line-height:1.6;max-width:32ch;color:var(--ink-2)}
+
+/* 三栏特性：每栏 = 1334 / φ² 的网格（4/4/4 的一种 φ 变体：间距 1 栏 / φ） */
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:0}
+.feat > div{padding:0 31px;border-left:1px solid var(--line-3)}
+.feat > div:first-child{padding-left:0;border-left:0}
+.feat > div:last-child{padding-right:0}
+.feat h3{font-size:17px;font-weight:500;display:flex;align-items:center;gap:10px;margin-bottom:var(--s1)}
+.feat h3 svg{color:var(--accent)}
+.feat p{font-size:14px;line-height:1.6;max-width:36ch}
+.feat code{font:400 12px/1 var(--mono);color:var(--ink);background:var(--surface-2);padding:3px 6px;border-radius:var(--r-sm)}
+
+/* 账号池表格：灰阶分层，无阴影 */
+.pool{margin-top:79px;background:var(--surface);border-top:.5px solid var(--line);border:1px solid var(--line-3);border-radius:var(--r-lg);overflow:hidden}
+.pool-head{display:grid;grid-template-columns:1fr 100px 110px 120px;gap:16px;padding:12px 18px;font:500 11px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--line-3)}
+.pool-row{display:grid;grid-template-columns:1fr 100px 110px 120px;gap:16px;padding:11px 18px;font-size:13px;color:var(--ink);border-bottom:1px solid var(--line-3);transition:background var(--t-fast) var(--ease)}
+.pool-row:last-child{border-bottom:0}
+.pool-row:hover{background:var(--surface-2)}
+.pool-row .mono{font-family:var(--mono);color:var(--ink-2);font-size:12px}
+.state{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+.state i{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.state.w i{background:var(--warn)}.state.e i{background:var(--err)}
+.bar{height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:2px;transition:width 300ms var(--ease-out)}
+
+/* 对比：左文 右面板 = φ 分栏 */
+.split{display:grid;grid-template-columns:508px 1fr;gap:0;align-items:center}
+.split .txt{padding-right:79px}
+.split h2{font-size:36px;line-height:1.15;max-width:480px}
+.split p{margin-top:var(--s2);font-size:16px;line-height:1.6;max-width:36ch}
+.kv{margin-top:var(--s2);display:grid;gap:0;border-top:1px solid var(--line-3)}
+.kv div{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line-3);font-size:13px}
+.kv span{color:var(--ink-3)}
+.kv b{color:var(--ink);font-weight:500;font-family:var(--mono);font-size:12px}
+.term{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden}
+.term-bar{height:36px;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--line-3);font:400 12px/1 var(--mono);color:var(--ink-3)}
+.term pre{padding:18px;font:400 13px/1.7 var(--mono);color:var(--ink-2);white-space:pre-wrap;min-height:260px}
+.term .k{color:var(--ink)}.term .s{color:var(--accent)}.term .c{color:var(--ink-3)}.term .g{color:var(--ok)}.term .w{color:var(--warn)}
+.caret{display:inline-block;width:8px;height:15px;background:var(--ink);vertical-align:-2px;margin-left:1px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ───────── 收尾 CTA：命令框宽 = 标题宽 / φ ───────── */
+.cta{text-align:center;padding:64px 0;position:relative;display:grid;place-items:center}
+.cta > .wrap{padding-bottom:56px}
+.cta h2{font-size:52px;line-height:1.1;margin:0 auto}
+.cta p{margin:var(--s2) auto 0;font-size:17px;max-width:40ch}
+.cmd{margin:var(--s2) auto 0;width:min(600px,100%);display:flex;align-items:center;gap:12px;height:50px;padding:0 16px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--surface);font:400 13px/1 var(--mono);color:var(--ink)}
+.cmd span{color:var(--ink-3);user-select:none}
+.cmd .cp{margin-left:auto;color:var(--ink-3);font-size:12px;transition:color var(--t-fast) var(--ease)}
+.cmd:hover .cp{color:var(--ink)}
+.cmd .cp.ok{color:var(--ok)}
+.cta .btns{margin-top:var(--s2);display:flex;justify-content:center;gap:8px}
+
+/* 页脚：12/24，SpaceX 式 */
+footer{position:absolute;inset:auto 0 0;border-top:1px solid var(--line-3);padding:20px 0 24px}
+footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;font-size:12px;line-height:24px;color:var(--ink-3)}
+footer a{color:var(--ink-2);transition:color var(--t-fast) var(--ease)}
+footer a:hover{color:var(--ink)}
+footer nav{display:flex;gap:20px}
+
+/* 桌面放大：只调整尺寸与留白，不改分栏、字距和动效比例 */
+@media (min-width:1101px) and (min-height:800px){
+  :root{--fs-3:80px}
+  .hero h1 .zh{line-height:1.08}
+  .hero .lead p{font-size:28px;max-width:460px}
+  .term-sec h2{font-size:40px;max-width:700px}
+  .term-sec .lead{font-size:18px;max-width:540px;margin-top:20px}
+  .mterm{width:min(1100px,100%);margin-top:48px;border-radius:14px}
+  .mterm-hd{height:48px}
+  .mterm-body{font-size:14px;line-height:1.85;padding:24px 28px 28px}
+  .mterm-body .bar{width:240px}
+  .sec-head{padding-bottom:64px}
+  .sec-head h2{font-size:56px}
+  .sec-head p{font-size:18px;max-width:480px}
+  .feat h3{font-size:18px}
+  .feat p{font-size:15px}
+  .pool{margin-top:64px}
+  .pool-head{padding:14px 20px}
+  .pool-row{padding:14px 20px;font-size:14px}
+  .pool-row .mono,.state{font-size:13px}
+  .split h2{font-size:44px;max-width:500px}
+  .split p{font-size:18px;max-width:480px}
+  .kv div{font-size:14px;padding:14px 0}
+  .kv b{font-size:13px}
+  .term pre{font-size:14px;padding:22px;min-height:300px}
+  .cta h2{font-size:64px}
+  .cta p{font-size:18px}
+  .cmd{height:56px;font-size:14px}
+}
+
+/* 矮屏：按高度收紧留白与尺寸，保证一屏装下 */
+@media (min-width:1101px) and (max-height:820px){
+  :root{--fs-3:64px}
+  .hero .lead p{font-size:22px}
+  .term-sec h2{font-size:32px}
+  .term-sec .lead{font-size:15px;margin-top:12px}
+  .mterm{width:min(880px,100%);margin-top:28px}
+  .mterm-body{font-size:12px;line-height:1.7;padding:16px 20px 18px}
+  .sec-head{padding-bottom:32px}
+  .sec-head h2{font-size:40px}
+  .sec-head p{font-size:16px;max-width:420px}
+  .feat p{font-size:13px}
+  .pool{margin-top:28px}
+  .pool-head{padding:9px 16px}
+  .pool-row{padding:8px 16px}
+  .split h2{font-size:34px}
+  .split p{font-size:15px;margin-top:20px}
+  .kv{margin-top:20px}
+  .kv div{padding:8px 0}
+  .term pre{font-size:12px;padding:14px;min-height:0}
+  .cta h2{font-size:44px}
+  .cmd{height:48px;margin-top:24px}
+  .cta .btns{margin-top:24px}
+}
+
+/* ───────── 响应式：按 φ 压缩，不缩放 ───────── */
+@media (max-width:1100px){
+  :root{--pad:40px}
+  .hero .wrap,.sec-head{grid-template-columns:1fr}
+  .hero .lead{grid-column:1;margin-top:var(--s2)}
+  .hero .lead p{max-width:40ch}
+  .sec-head{gap:var(--s2);padding-bottom:24px}
+  .pool{margin-top:24px}
+  .feat{grid-template-columns:repeat(3,1fr)}
+  .feat > div{padding:0 20px;border-left:1px solid var(--line-3);border-top:0}
+  .feat > div:first-child{padding-left:0;border-left:0}
+  .feat > div:last-child{padding-right:0}
+  .split{grid-template-columns:minmax(0,40%) 1fr}
+  .split .txt{padding-right:40px;margin-bottom:0}
+  .term pre{min-height:0}
+  .win-body{grid-template-columns:1fr}
+  .chat{border-right:0;border-bottom:1px solid var(--line-3)}
+  .canvas{min-height:300px}
+}
+@media (max-width:760px){
+  .feat{grid-template-columns:1fr}
+  .feat > div{padding:14px 0;border-left:0;border-top:1px solid var(--line-3)}
+  .feat > div:first-child{padding-top:0;border-top:0}
+  .split{grid-template-columns:1fr}
+  .split .txt{padding-right:0;margin-bottom:24px}
+}
+@media (max-width:640px){
+  :root{--pad:20px;--fs-3:40px;--sec:80px;--sec-half:48px}
+  .hero{min-height:calc(100svh - 64px);padding:40px 0}
+  .term-sec,.sec,.cta{min-height:calc(100svh - 64px);padding:40px 0}
+  .hero,.term-sec,.sec,.cta{display:block}
+  .sec-head{padding-bottom:20px}
+  .pool{margin-top:20px}
+  .pool-head{padding:8px 14px}
+  .pool-row{padding:7px 14px}
+  .split p{margin-top:20px}
+  .kv{margin-top:20px}
+  .kv div{padding:8px 0}
+  .term pre{padding:12px;min-height:0}
+  .cta{position:relative;padding-bottom:140px}
+  .cta h2{font-size:34px}
+  .mterm{width:100%;margin-top:40px}
+  .mterm-body{white-space:pre-wrap;word-break:break-word;font-size:11px}
+  .mterm-body .bar{width:120px}
+  .mterm-hd .tab{margin-left:4px;font-size:10px;padding:0 8px}
+  .mterm-hd{gap:6px;padding:0 10px}
+  .mterm-hd .lights{gap:6px}
+  .mterm-hd .lights i{width:10px;height:10px}
+  .term pre{min-height:0;max-height:330px;overflow:auto}
+  .hero h1,.sec-head h2,.split h2,.cta h2{font-size:30px}
+  .hero .lead p,.sec-head p{font-size:15px}
+  .feat h3{font-size:15px;margin-bottom:8px}
+  .feat p{font-size:13px;line-height:1.5}
+  .nav-links{display:none}
+  .pool-head,.pool-row{grid-template-columns:1fr 90px 90px}
+  .pool-head :nth-child(3),.pool-row :nth-child(3){display:none}
+  .cmd{font-size:12px}
+}
+</style>
+</head>
+<body>
+<div class="glow" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="1" y="1" width="16" height="16" rx="4" stroke="currentColor" stroke-width="1.5"/><path d="M5 9l2.5 3L13 6" stroke="#8fa6ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>WorkBuddy2API</a>
+    <nav class="nav-links">
+      <a href="#demo">演示</a><a href="#pool">账号池</a><a href="#gateway">网关</a><a href="#start">接入</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn btn-primary" href="#start">开始使用</a>
+    </div>
+  </div>
+</header>
+
+<main class="stage">
+<!-- 首屏。高 = 100vh / φ；文案栏 826 = 1334/φ；窗口宽 = 826/φ -->
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <h1><span class="en in" style="--i:0">One endpoint</span><span class="zh in" style="--i:1">替你管好每个账号</span></h1>
+    </div>
+    <div class="lead in" style="--i:2">
+      <p>把 CodeBuddy 账号变成 OpenAI 接口。多账号池、熔断冷却、会话粘性都由网关处理，客户端只改一个 base URL。</p>
+      <div class="btns">
+        <a class="btn btn-primary" href="#start">获取接入地址</a>
+        <a class="btn btn-ghost" href="#pool">看账号池怎么工作</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 终端：暖色杂色底 + 浅色 Mac 终端，启动日志逐行打出 -->
+<section class="term-sec" id="demo">
+  <div class="bg" aria-hidden="true"><svg viewBox="0 0 1600 1000" preserveAspectRatio="none">
+    <defs>
+      <!-- 大面积色块：低频分形噪声 → 阈值化 → 模糊，形成「水彩晕开」的边。只在局部出现赭石 -->
+      <!-- 大面积色块：低频分形噪声 → 阈值化 → 作为蒙版挖空 rect 的 fill 色 → 模糊。色块边缘是「水彩晕开」 -->
+      <filter id="blobs" x="-10%" y="-10%" width="120%" height="120%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.0032 0.004" numOctaves="3" seed="7" result="n"/>
+        <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  2.6 1.9 0 0 -0.95" result="m"/>
+        <feComposite in="SourceGraphic" in2="m" operator="in"/>
+        <feGaussianBlur stdDeviation="26"/>
+      </filter>
+      <!-- 斜向晕染：低频噪声形成不规则块，同样用 SourceGraphic 取色 -->
+      <filter id="strokes" x="-20%" y="-20%" width="140%" height="140%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.007 0.013" numOctaves="4" seed="11" result="n"/>
+        <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1.8 1.2 0 0 -0.8" result="m"/>
+        <feComposite in="SourceGraphic" in2="m" operator="in"/>
+        <feGaussianBlur stdDeviation="9"/>
+      </filter>
+      <!-- 细颗粒：高频噪声，极淡，做「纸面」质感 -->
+      <filter id="grain">
+        <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" seed="3"/>
+        <feColorMatrix type="saturate" values="0"/>
+        <feComponentTransfer><feFuncA type="linear" slope=".16"/></feComponentTransfer>
+      </filter>
+      <linearGradient id="base" x1="0.1" y1="0" x2="0.9" y2="1">
+        <stop offset="0" stop-color="#f4efe6"/>
+        <stop offset=".35" stop-color="#f4efe6"/>
+        <stop offset=".6" stop-color="#efe4d2"/>
+        <stop offset="1" stop-color="#e8d6bc"/>
+      </linearGradient>
+      <radialGradient id="light" cx="50%" cy="42%" r="70%">
+        <stop offset="0" stop-color="#fff" stop-opacity=".55"/>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <!-- 底：米白 / 浅沙 -->
+    <rect width="1600" height="1000" fill="url(#base)"/>
+    <!-- 赭石色块，只在左上和右下各出现一块 -->
+    <g transform="rotate(-28 800 500)">
+      <rect x="-500" y="-400" width="1300" height="800" fill="#b06e3a" filter="url(#blobs)" opacity=".9"/>
+      <rect x="900" y="650" width="1400" height="900" fill="#c08248" filter="url(#blobs)" opacity=".85"/>
+      <!-- 青灰一块，让暖色不闷 -->
+      <rect x="800" y="-350" width="1000" height="650" fill="#7f948e" filter="url(#blobs)" opacity=".5"/>
+    </g>
+    <!-- 斜向晕染：用褐色而不是黑色去乘，压出来是暖的不是灰的 -->
+    <g transform="rotate(-28 800 500)">
+      <rect x="-500" y="-500" width="2600" height="2000" fill="#9a6a44" filter="url(#strokes)" opacity=".62" style="mix-blend-mode:multiply"/>
+    </g>
+    <!-- 中心提亮，窗口下方那块最亮 -->
+    <rect width="1600" height="1000" fill="url(#light)"/>
+    <!-- 颗粒 -->
+    <rect width="1600" height="1000" filter="url(#grain)" opacity=".5" style="mix-blend-mode:multiply"/>
+  </svg></div>
+  <div class="wrap">
+    <div><h2 class="rv" style="--i:0"><span class="en">One command</span> 一条命令拉起网关</h2>
+      <p class="lead rv" style="--i:1">agent 在本地运行，账号凭据不出机器。启动时自动签到、回血、装填账号池。</p>
+    </div>
+    <div class="mterm rv" style="--i:2" id="mterm">
+      <div class="mterm-hd"><span class="lights"><i></i><i></i><i></i></span><span class="tab"><i></i><b>zsh</b> — workbuddy2api</span></div>
+      <pre class="mterm-body" id="mterm-body"></pre>
+    </div>
+  </div>
+</section>
+
+<!-- 账号池 -->
+<section class="sec" id="pool">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2 class="rv" style="--i:0">账号不是用坏的<br>是被同时打坏的</h2>
+      <p class="rv" style="--i:1">每个账号有独立的限流窗口。网关按冷却时间而不是轮询来调度，哪个能回池、什么时候回，都在一张表里。</p>
+    </div>
+    <div class="feat">
+      <div class="rv" style="--i:0"><h3><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.5V8l2.5 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>熔断冷却</h3><p>命中 429 后按 <code>Retry-After</code> 下线账号，到点自动回池，不猜测、不提前。</p></div>
+      <div class="rv" style="--i:1"><h3><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12M8 2v12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></svg>会话粘性</h3><p>同一个 <code>conversation_id</code> 固定落到同一账号，上下文连续，不被切到别的号。</p></div>
+      <div class="rv" style="--i:2"><h3><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 12V8m5 4V4m5 8V6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>积分可见</h3><p>每次请求回写积分，<code>/v1/pool</code> 直接返回，不用再登后台翻。</p></div>
+    </div>
+
+    <div class="pool rv" style="--i:3">
+      <div class="pool-head"><span>账号</span><span>状态</span><span>积分</span><span>冷却</span></div>
+      <div class="pool-row"><span>a1</span><span class="state"><i></i>可用</span><span class="mono">1,240</span><span class="bar"><i style="width:82%"></i></span></div>
+      <div class="pool-row"><span>a3</span><span class="state"><i></i>可用</span><span class="mono">980</span><span class="bar"><i style="width:61%"></i></span></div>
+      <div class="pool-row"><span>b1</span><span class="state w"><i></i>限流</span><span class="mono">412</span><span class="bar"><i style="width:29%"></i></span></div>
+      <div class="pool-row"><span>c2</span><span class="state"><i></i>可用</span><span class="mono">2,060</span><span class="bar"><i style="width:100%"></i></span></div>
+      <div class="pool-row"><span>c3</span><span class="state e"><i></i>封禁</span><span class="mono">0</span><span class="bar"><i style="width:0%"></i></span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 网关 -->
+<section class="sec" id="gateway">
+  <div class="wrap">
+    <div class="split">
+      <div class="txt">
+        <h2 class="rv" style="--i:0">改一行 base URL 其余不动</h2>
+        <p class="rv" style="--i:1">OpenAI 的 <code style="font-family:var(--mono);color:var(--ink)">/v1/chat/completions</code> 原样透传。SDK、Agent 框架、CLI 都不用改代码，只改环境变量。</p>
+        <div class="kv rv" style="--i:2">
+          <div><span>Base URL</span><b>http://127.0.0.1:8787/v1</b></div>
+          <div><span>模型</span><b>GLM-5 · Hermes</b></div>
+          <div><span>协议</span><b>OpenAI 兼容 · SSE 流式</b></div>
+          <div><span>账号池</span><b>9 个 · 6 可用</b></div>
+        </div>
+      </div>
+      <div class="term rv" style="--i:1">
+        <div class="term-bar">zsh</div>
+        <pre><span class="c">$</span> <span class="k">export</span> OPENAI_BASE_URL=http://127.0.0.1:8787/v1
+<span class="c">$</span> <span class="k">curl</span> $OPENAI_BASE_URL/chat/completions \
+    <span class="s">-d</span> '{"model":"glm-5","messages":[{"role":"user","content":"hi"}]}'
+
+{
+  <span class="s">"id"</span>: <span class="g">"chatcmpl-7f2a"</span>,
+  <span class="s">"model"</span>: <span class="g">"glm-5"</span>,
+  <span class="s">"account"</span>: <span class="w">"a3"</span>,        <span class="c"># 会话粘性</span>
+  <span class="s">"credits_left"</span>: 980
+}<span class="caret"></span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA。命令框宽 = 520 ≈ 标题宽 841 / φ -->
+<section class="cta" id="start">
+  <div class="wrap">
+    <h2 class="rv" style="--i:0">把 CodeBuddy 账号变成 OpenAI 接口</h2>
+    <p class="rv" style="--i:1">一条命令拉起，改一行环境变量接入</p>
+    <div class="cmd rv" style="--i:2" id="cmd"><span>$</span><code style="font:inherit;color:inherit">npx workbuddy2api --port 8787</code><button class="cp" type="button">复制</button></div>
+    <div class="btns rv" style="--i:3"><a class="btn btn-primary" href="#">获取接入地址</a></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>WorkBuddy2API</span>
+    <nav><a href="#pool">账号池</a><a href="#gateway">网关</a><a href="#start">接入</a></nav>
+  </div>
+</footer>
+</main>
+
+<script>
+// 滚动入场：触发一次即卸载。threshold 0.15 + rootMargin -10% 保证元素真进入视线再动。
+const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } }, { threshold: 0.15, rootMargin: '0px 0px -10% 0px' });
+document.querySelectorAll('.rv').forEach((el) => io.observe(el));
+
+// 终端启动日志：IO 触发后逐行打出（每行 ~180ms，整体 ~2s，AutoClaw 式流式但只跑一次）
+const LINES = [
+  ['<span class="p">$</span> npx <span class="k">workbuddy2api</span> --port 8787'],
+  ['<span class="d">workbuddy2api</span> <span class="d">v2.4.1</span>'],
+  [''],
+  ['<span class="y">▸</span> 读取账号池  <span class="d">~/.workbuddy/accounts.json</span>'],
+  ['  <span class="g">✓</span> 9 个账号载入  <span class="d">6 可用 · 2 限流 · 1 封禁</span>'],
+  [''],
+  ['<span class="y">▸</span> 签到回血'],
+  ['  <span class="g">✓</span> a1  +120   <span class="g">✓</span> a3  +118   <span class="g">✓</span> b1  <span class="d">冷却中，02:41 后重试</span>'],
+  [''],
+  ['<span class="y">▸</span> 账号池就绪  <span class="bar"><i></i></span>  <span class="d">9/9</span>'],
+  [''],
+  ['<span class="g">✓</span> 网关已启动  <span class="b">http://127.0.0.1:8787/v1</span>'],
+  ['<span class="d">  模型：GLM-5 · Hermes    协议：OpenAI 兼容 · SSE 流式</span>'],
+  ['<span class="d">  日志：~/.workbuddy/gateway.log</span>'],
+  [''],
+  ['<span class="p">$</span> <span class="caret"></span>'],
+];
+const body = document.getElementById('mterm-body');
+if (body) { body.innerHTML = LINES.map(([h]) => '<span class="ln">' + h + '</span>').join(''); }
+let termRun = false;
+const runTerm = () => {
+  if (termRun) return; termRun = true;
+  const lns = [...body.querySelectorAll('.ln')];
+  lns.forEach((ln, i) => setTimeout(() => { ln.classList.add('on'); const bar = ln.querySelector('.bar'); if (bar) setTimeout(() => bar.classList.add('on'), 50); }, 180 * i));
+};
+if (body) { const tio = new IntersectionObserver((es) => { if (es.some(e => e.isIntersecting)) { runTerm(); tio.disconnect(); } }, { threshold: 0.35 }); tio.observe(document.getElementById('mterm')); }
+
+// 平行滚动：背景 glow 以 0.5× 跟随（只做位移，不改 blur——改 filter 每帧会重绘）。
+const glow = document.querySelector('.glow');
+let py = -1, raf = 0, ticking = false;
+const paintGlow = () => { raf = 0; const y = Math.round(window.scrollY * 0.5); if (y !== py) { py = y; glow.style.transform = 'translate3d(0,' + -y + 'px,0)'; } ticking = false; };
+// 滚动事件可能连发，只排一帧；rAF 内再读 scrollY 保证拿到的是最终值
+addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(paintGlow); }, { passive: true });
+
+// 复制按钮状态切换（150ms）。
+const cmd = document.getElementById('cmd');
+const cp = cmd.querySelector('.cp');
+cp.addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(cmd.querySelector('code').textContent); } catch {}
+  cp.textContent = '已复制'; cp.classList.add('ok');
+  setTimeout(() => { cp.textContent = '复制'; cp.classList.remove('ok'); }, 1600);
+});
+
+/* ───────── 满屏翻页：一次一格 + 先快后慢 + 高斯模糊 ───────── */
+const stage = document.querySelector('.stage');
+const pages = [...document.querySelectorAll('.stage > section')];
+const rootEl = document.documentElement;
+const NAVH = 64, DUR = 720, MAXB = 8;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+let cur = 0, busy = false, acc = 0, cool = 0, lastWheel = 0, animId = 0;
+// 用 rect 算文档坐标：.stage 是 position:relative，offsetTop 会相对它而不是文档
+const docTop = el => el.getBoundingClientRect().top + scrollY;
+const topOf = i => docTop(pages[i]) - NAVH;
+const clampIdx = i => Math.max(0, Math.min(pages.length - 1, i));
+
+// 速度→模糊：读真实滚动位移，滚轮/触控板/拖滚动条/键盘都吃到同一套
+let vy = 0, lastY = scrollY, lastT = 0, rafV = 0, bNow = 0, lastWrite = 0;
+const tickBlur = now => {
+  rafV = 0;
+  const dt = Math.max(8, now - lastT), dy = Math.abs(scrollY - lastY);
+  lastY = scrollY; lastT = now;
+  if (dy < 3) { vy *= 0.5; } else { vy += (dy / dt - vy) * 0.5; }   // 亚像素级修正不算速度，避免收尾时回闪
+  const q = reduce.matches ? 0 : Math.round(Math.min(MAXB, vy * 1.1) * 2) / 2;  // 量化 0.5px
+  if (q > 0) {
+    stage.classList.add('is-moving');
+    // 半径变化 = 整层重栅格化，限到 ~20 次/秒；运动中看不出来
+    if (q !== bNow && now - lastWrite >= 45) { bNow = q; lastWrite = now; stage.style.setProperty('--blur', q + 'px'); }
+    rafV = requestAnimationFrame(tickBlur);
+  } else {
+    bNow = 0; stage.style.setProperty('--blur', '0px'); stage.classList.remove('is-moving');
+  }
+};
+addEventListener('scroll', () => {
+  if (!rafV) { lastT = performance.now(); lastY = scrollY; rafV = requestAnimationFrame(tickBlur); }
+}, { passive: true });
+
+// 先快后慢：easeOutExpo。翻页期间关掉吸附，避免浏览器中途重新对齐
+const jump = (i, dur = DUR) => {
+  i = clampIdx(i);
+  const to = topOf(i), from = scrollY;
+  cur = i;
+  if (Math.abs(to - from) < 1) return;
+  if (reduce.matches || dur === 0) { scrollTo(0, to); return; }
+  busy = true;
+  const id = ++animId;                     // 新一轮翻页会作废旧循环，不会两个动画抢着写 scrollY
+  rootEl.style.scrollSnapType = 'none';
+  const t0 = performance.now(), d = to - from;
+  const step = () => {
+    if (id !== animId) return;
+    // 用真实时间而非 rAF 时间戳：重栅格化时时间戳会滞后，会让动画拖尾、末尾一次性补齐
+    const t = Math.min(1, (performance.now() - t0) / dur);
+    scrollTo(0, from + d * (t >= 1 ? 1 : 1 - Math.pow(1 - t, 4)));   // 先快后慢，收尾不拖
+    if (t < 1) requestAnimationFrame(step);
+    else { busy = false; rootEl.style.scrollSnapType = 'y mandatory'; }
+  };
+  requestAnimationFrame(step);
+};
+
+// 内部可滚动区域（手机上的命令块）不接管
+const canScrollInner = (el, dy) => {
+  for (let n = el; n && n !== document.body; n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight - n.clientHeight > 2) {
+      const top = n.scrollTop <= 0, bot = n.scrollTop + n.clientHeight >= n.scrollHeight - 1;
+      if (dy > 0 ? !bot : !top) return true;
+    }
+  }
+  return false;
+};
+
+addEventListener('wheel', e => {
+  if (e.ctrlKey || e.metaKey || canScrollInner(e.target, e.deltaY)) return;
+  e.preventDefault();
+  const now = performance.now();
+  if (now - lastWheel > 120) acc = 0;                // 新手势：清掉上一段惯性尾巴
+  lastWheel = now;
+  if (busy || now < cool) return;
+  acc += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+  if (Math.abs(acc) < 32) return;
+  const dir = acc > 0 ? 1 : -1;
+  acc = 0;
+  if (cur + dir < 0 || cur + dir > pages.length - 1) return;
+  jump(cur + dir);
+  cool = now + 760;
+}, { passive: false });
+
+addEventListener('keydown', e => {
+  if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+  const k = e.key;
+  const down = k === 'PageDown' || k === 'ArrowDown' || (k === ' ' && !e.shiftKey);
+  const up = k === 'PageUp' || k === 'ArrowUp' || (k === ' ' && e.shiftKey);
+  if ((down || up) && canScrollInner(e.target, down ? 1 : -1)) return;
+  if (down || up) { e.preventDefault(); if (!busy) jump(cur + (down ? 1 : -1)); }
+  else if (k === 'Home') { e.preventDefault(); jump(0); }
+  else if (k === 'End') { e.preventDefault(); jump(pages.length - 1); }
+});
+
+// 导航与页内锚点也走同一套缓动
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[href^="#"]');
+  if (!a) return;
+  const id = a.getAttribute('href').slice(1);
+  const i = id ? pages.findIndex(p => p.id === id) : 0;
+  if (i < 0) return;
+  e.preventDefault();
+  jump(i);
+});
+
+// 拖滚动条/触控滑动后回写当前页
+addEventListener('scroll', () => {
+  clearTimeout(window.__syncCur);
+  window.__syncCur = setTimeout(() => {
+    if (busy) return;
+    let best = 0, bd = Infinity;
+    pages.forEach((p, i) => { const d = Math.abs(topOf(i) - scrollY); if (d < bd) { bd = d; best = i; } });
+    cur = best;
+  }, 140);
+}, { passive: true });
+</script>
+</body>
+</html>
