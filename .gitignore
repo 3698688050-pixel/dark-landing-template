@@ -13,3 +13,4 @@ _int.css
 _fonts.cjs
 check-profile.cjs
 *.png
+*.pre-opt.html

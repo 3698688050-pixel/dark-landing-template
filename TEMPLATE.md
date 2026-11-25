@@ -418,6 +418,8 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
   /* 面板高 : 页面高 = 1 : 1.618，高度写死，打字时不再动 */
   display:flex;flex-direction:column;
   height:calc((100vh - var(--hdr)) / 1.618);
+  /* 只隔离布局，不加 paint：paint 会让内部文字切流渲染路径，抗锯齿会变 */
+  contain:layout;
 }
 .term-hd{
   display:flex;align-items:center;gap:10px;height:52px;padding:0 18px;
@@ -431,8 +433,7 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
 .term-hd .lights i:nth-child(3){background:#28c840}
 .dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
 .term-body{padding:26px 22px 30px;font:400 15px/28px var(--mono);color:var(--ink-2);
-  flex:1;overflow:hidden;
-  overflow:hidden}
+  flex:1;overflow:hidden;contain:layout}
 .term-body pre{margin:0;font:inherit;white-space:pre;overflow:hidden}
 .term-body .req{color:var(--ink-3)}
 .term-body .k{color:#8fa6ff}
@@ -440,7 +441,7 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
 .term-body .n{color:#e0c08a}
 .term-body .out{color:var(--ink);white-space:pre-wrap}
 .caret{display:inline-block;width:8px;height:16px;background:var(--accent);
-  vertical-align:-3px;animation:blink 1.05s steps(1) infinite}
+  vertical-align:-3px;animation:blink 1.05s steps(1) infinite;will-change:opacity}
 @keyframes blink{50%{opacity:0}}
 
 /* 开屏：整块淡入 + 去模糊（不裁切、不位移，布局比例始终固定） */
@@ -474,9 +475,10 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
   display:flex;flex-direction:column;
   background:var(--panel-grad);border:1px solid var(--line);border-radius:var(--r-lg);
   overflow:hidden;
-  transform-style:preserve-3d;
+  transform-style:preserve-3d;backface-visibility:hidden;
   transition:transform .22s cubic-bezier(.16,1,.3,1);
   will-change:transform;
+  contain:layout paint;
 }
 .shot-hd{display:flex;align-items:center;gap:12px;height:34px;padding:0 12px;
   border-bottom:1px solid var(--line-3)}
@@ -486,7 +488,7 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
   display:flex;flex-direction:column;gap:1px}
 .shot-nav .it{font-size:11px;line-height:17px;color:var(--ink-3);padding:4px 7px;border-radius:5px}
 .shot-nav .it.on{background:rgba(255,255,255,.045);color:var(--ink)}
-.shot-main{padding:14px 15px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.shot-main{padding:14px 15px;display:flex;flex-direction:column;min-height:0;overflow:hidden;contain:layout paint}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line-3);
   flex:none;
   border:1px solid var(--line-3);border-radius:6px;overflow:hidden;margin-bottom:14px}
@@ -589,7 +591,11 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
   position:relative;isolation:isolate;
   display:flex;flex-direction:column;justify-content:safe center;
   scroll-snap-align:start;scroll-snap-stop:always;overflow-y:auto;overscroll-behavior:contain;
-  transform-origin:50% 50%}
+  transform-origin:50% 50%;
+  contain:layout style;backface-visibility:hidden}
+/* 静止态不持有合成层：只有正在变换/模糊的页才占显存 */
+.deck > section.is-set{will-change:auto}
+.deck > section:not(.is-set){will-change:transform,filter,opacity}
 /* 压掉各段自己的 padding，否则每页位置参差不齐 */
 .deck > section.hero,.deck > section.sec,.deck > section.close{padding:44px 0}
 /* 每页同一层冷暖叠光：黑底不死黑，红/绿只在边缘出现 */
@@ -632,7 +638,7 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
 .dots i[aria-current]{width:16px;border-radius:3px;background:var(--ink)}
 
 @media (prefers-reduced-motion:reduce){
-  .deck > section,.deck > footer{filter:none;opacity:1;transition:none}
+  .deck > section,.deck > footer{filter:none!important;opacity:1!important;transform:none!important;will-change:auto}
   *{animation:none!important;transition:none!important}
 }
 ```
@@ -670,25 +676,59 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
     .filter(t => t !== undefined && t !== "")
     .map(t => [t, t[0] === '"' ? "s" : KW.test(t) ? "k" : /^\d+$/.test(t) ? "n" : ""])
   const plain = raw
-  const draw = (n) => {
-    let out = "", left = n
-    for (const [t, c] of segs) {
-      if (left <= 0) break
-      const part = t.slice(0, left)
-      left -= part.length
-      out += c ? `<span class="${c}">${part}</span>` : part
-    }
-    return out
+  // 关键字蓝 / 字符串绿 / 数字黄，其余白。相邻的无色段先合并成一段，
+  // 这样产出的 DOM 与原 innerHTML 解析结果完全一致（相邻裸文本会被解析器合成一个文本节点）。
+  const merged = []
+  for (const [t, c] of segs) {
+    const last = merged[merged.length - 1]
+    if (!c && last && !last[1]) last[0] += t
+    else merged.push([t, c])
   }
+  // 逐 token 建立：已打完的 token 是静态节点，不再触碰；每帧只重写「正在打的那个 token」
+  // （原实现每帧重建整个 <pre> 的 innerHTML）。有色 token 用 <span>，无色 token 用裸文本节点。
+  const slots = []          // { host, text, at }
+  const emit = (text, cls) => {
+    if (!text) return
+    const host = cls ? document.createElement('span') : document.createTextNode('')
+    if (cls) host.className = cls
+    el.appendChild(host)
+    slots.push({ host, text, at: 0 })
+  }
+  for (const [t, c] of merged) emit(t, c)
+  // 打完后光标留在末尾闪烁（与原行为一致），独立节点挂在最后，不参与重建
+  const caretEl = document.createElement('span')
+  caretEl.className = 'caret'
+  caretEl.setAttribute('aria-hidden', 'true')
+  caretEl.style.display = 'none'
+  el.appendChild(caretEl)
+
+  const total = plain.length
+  let pos = 0            // 已打出字符数
+  let si = 0             // 正在打的 token 下标
+  const setText = (s, v) => { if (s.host.nodeType === 3) s.host.data = v; else s.host.textContent = v }
+  const render = (n) => {
+    // 向前推进：把跨过的 token 定稿
+    while (si < slots.length && n >= pos + slots[si].text.length) {
+      const s = slots[si]
+      if (s.at !== s.text.length) { setText(s, s.text); s.at = s.text.length }
+      pos += s.text.length; si++
+    }
+    if (si < slots.length) {
+      const s = slots[si]
+      const k = n - pos
+      if (k !== s.at) { setText(s, s.text.slice(0, k)); s.at = k }
+    }
+  }
+  const show = (n) => { render(n); caretEl.style.display = '' }
 
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduced) { el.innerHTML = draw(plain.length); return; }
+  if (reduced) { show(total); return; }
 
-  // 逐字敲出来，出完就停
+  // 逐字敲出来，出完就停。每帧只改一个 token 的 textContent，布局不变。
   let i = 0;
   const tick = () => {
-    el.innerHTML = draw(i) + '<span class="caret"></span>';
-    if (i >= plain.length) return;
+    show(i)
+    if (i >= total) return
     i += 1;
     setTimeout(tick, i < 4 ? 260 : 26);
   };
@@ -717,23 +757,30 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
 
   // 模糊/缩放按「离视口中心的距离」连续变化：越远越糊越小，靠拢时自然变清楚
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+  // 只写发生变化的属性：值没变就不碰 style，静止时不会有多余的样式失效
+  const st = slides.map(() => ({}))
+  const set = (n, key, val) => { if (st[n][key] !== val) { st[n][key] = val; slides[n].style[key] = val } }
   const paint = () => {
     const w = deck.clientWidth
+    if (!w) return
     const mid = deck.scrollLeft + w / 2
     const dl = deck.offsetLeft
-    slides.forEach((s) => {
+    for (let n = 0; n < slides.length; n++) {
+      const s = slides[n]
       const off = (s.offsetLeft - dl + s.offsetWidth / 2 - mid) / w
       const a = Math.min(1, Math.abs(off))
       if (reduced) {
-        s.style.filter = 'none'
-        s.style.opacity = (1 - a * 0.55).toFixed(3)
-        s.style.transform = 'none'
-        return
+        set(n, 'filter', 'none')
+        set(n, 'opacity', (1 - a * 0.55).toFixed(3))
+        set(n, 'transform', 'none')
+        continue
       }
-      s.style.filter = a < 0.012 ? 'none' : 'blur(' + (a * 16).toFixed(1) + 'px)'
-      s.style.opacity = (1 - a * 0.7).toFixed(3)
-      s.style.transform = a < 0.012 ? 'none' : 'scale(' + (1 - a * 0.045).toFixed(3) + ')'
-    })
+      // 完全离开视口的页直接关掉滤镜，不再占一个 blur 合成层
+      if (a >= 1) { set(n, 'filter', 'none'); set(n, 'opacity', '0'); set(n, 'transform', 'scale(0.955)'); continue }
+      set(n, 'filter', a < 0.012 ? 'none' : 'blur(' + (a * 16).toFixed(1) + 'px)')
+      set(n, 'opacity', (1 - a * 0.7).toFixed(3))
+      set(n, 'transform', a >= 0.012 ? 'scale(' + (1 - a * 0.045).toFixed(3) + ')' : 'none')
+    }
   }
 
   const sync = () => {
@@ -774,7 +821,10 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
     raf = requestAnimationFrame(step)
   }
 
-  deck.addEventListener('scroll', () => requestAnimationFrame(sync), { passive: true })
+  // scroll 事件一帧可能来多次，只留一次 rAF
+  let pending = 0
+  const onScroll = () => { if (!pending) pending = requestAnimationFrame(() => { pending = 0; sync() }) }
+  deck.addEventListener('scroll', onScroll, { passive: true })
   prev.addEventListener('click', () => go(idx - 1))
   next.addEventListener('click', () => go(idx + 1))
 
@@ -814,7 +864,9 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
         ` rotateY(${(BASE_Y + nx * MAX).toFixed(2)}deg)`
     }
 
-    // 面板一直长到白线上方 16px（3D 投影会压缩，所以迭代几次收敄）
+    // 面板一直长到白线上方 16px（3D 投影会压缩，所以迭代几次收敛）。
+    // 注意：这里量的是该页「当前渲染态」的几何，所以必须在该页可见（不带 scale）时算；
+    // 结果依赖 paint 写上去的样式，故算法与原来完全一致，只改触发时机。
     const fit = () => {
       shot.style.height = ''
       apply(0, 0)
@@ -830,14 +882,30 @@ h1 em::after{content:"";position:absolute;z-index:-1;left:-.06em;right:-.06em;
     }
 
     fit()
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit)
     addEventListener('resize', () => fit())
+
+    // 翻页落定后精修一次（原实现：每个 scroll 事件都 setTimeout 180ms 重算）。
+    // 防抖本身已经是「停止后才跑」，这里只多加一个闸：不是本页激活就不算，
+    // 所以从第 1 页翻到第 3 页这种连续滚动，中间不会白跑。
     let ft = 0
-    deck.addEventListener('scroll', () => { clearTimeout(ft); ft = setTimeout(fit, 180) }, { passive: true })
+    const refit = () => { if (shotSec.classList.contains('is-active')) fit() }
+    deck.addEventListener('scroll', () => { clearTimeout(ft); ft = setTimeout(refit, 180) }, { passive: true })
+
+    // 鼠标视差：每帧最多写一次 transform，用 rAF 合并
+    let nx = 0, ny = 0, mr = 0
+    const flush = () => { mr = 0; apply(nx, ny) }
     shotSec.addEventListener('mousemove', (e) => {
       const r = shotSec.getBoundingClientRect()
-      apply((e.clientX - r.left) / r.width - 0.5, (e.clientY - r.top) / r.height - 0.5)
+      nx = (e.clientX - r.left) / r.width - 0.5
+      ny = (e.clientY - r.top) / r.height - 0.5
+      if (!mr) mr = requestAnimationFrame(flush)
     })
-    shotSec.addEventListener('mouseleave', () => apply(0, 0))
+    shotSec.addEventListener('mouseleave', () => {
+      nx = 0; ny = 0
+      if (mr) cancelAnimationFrame(mr)
+      mr = requestAnimationFrame(flush)
+    })
   }
 })();
 ```
